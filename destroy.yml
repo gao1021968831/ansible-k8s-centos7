@@ -1,0 +1,143 @@
+---
+- name: Drain and remove worker nodes
+  hosts: workers
+  tags:
+    - drain
+    - destroy
+  tasks:
+    - name: Drain worker node
+      shell: |
+        kubectl drain {{ inventory_hostname }} --ignore-daemonsets --delete-emptydir-data --force
+      environment:
+        KUBECONFIG: /root/.kube/config
+      ignore_errors: yes
+      delegate_to: "{{ groups['masters'][0] }}"
+
+    - name: Remove worker node from cluster
+      shell: |
+        kubectl delete node {{ inventory_hostname }}
+      environment:
+        KUBECONFIG: /root/.kube/config
+      ignore_errors: yes
+      delegate_to: "{{ groups['masters'][0] }}"
+
+    - name: Reset worker node
+      shell: |
+        kubeadm reset -f
+      ignore_errors: yes
+
+    - name: Clean up worker node directories (keep CNI config)
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/kubernetes
+        - /var/lib/kubelet
+        - /var/lib/etcd
+      ignore_errors: yes
+
+    - name: Clean up CNI config (optional)
+      file:
+        path: /etc/cni/net.d
+        state: absent
+      ignore_errors: yes
+      when: cleanup_cni_config | default(false) | bool
+
+- name: Destroy master nodes
+  hosts: masters
+  tags:
+    - destroy-masters
+    - destroy
+  tasks:
+    - name: Reset master node
+      shell: |
+        kubeadm reset -f
+      ignore_errors: yes
+
+    - name: Clean up master node directories (keep CNI config)
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/kubernetes
+        - /var/lib/kubelet
+        - /var/lib/etcd
+      ignore_errors: yes
+
+    - name: Clean up CNI config (optional)
+      file:
+        path: /etc/cni/net.d
+        state: absent
+      ignore_errors: yes
+      when: cleanup_cni_config | default(false) | bool
+
+    - name: Remove kubeadm config directory
+      file:
+        path: /etc/kubernetes/kubeadm
+        state: absent
+      ignore_errors: yes
+
+    - name: Remove kube config
+      file:
+        path: /root/.kube
+        state: absent
+      ignore_errors: yes
+
+- name: Clean up all nodes
+  hosts: all
+  tags:
+    - cleanup
+    - destroy
+  tasks:
+    - name: Stop and disable kubelet
+      systemd:
+        name: kubelet
+        state: stopped
+        enabled: no
+      ignore_errors: yes
+
+    - name: Remove nginx proxy manifest
+      file:
+        path: /etc/kubernetes/manifests/nginx-proxy.yaml
+        state: absent
+      ignore_errors: yes
+
+    - name: Remove nginx config
+      file:
+        path: /etc/kubernetes/nginx.conf
+        state: absent
+      ignore_errors: yes
+
+    - name: Clean up iptables rules
+      shell: |
+        iptables -F
+        iptables -X
+        iptables -t nat -F
+        iptables -t nat -X
+        iptables -t mangle -F
+        iptables -t mangle -X
+      ignore_errors: yes
+
+    - name: Clean up network interfaces
+      shell: |
+        ip link delete flannel.1 2>/dev/null || true
+        ip link delete cni0 2>/dev/null || true
+        ip link delete tunl0 2>/dev/null || true
+      ignore_errors: yes
+
+    - name: Clean up Calico directories
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/cni/net.d/10-calico.conflist
+        - /etc/cni/net.d/calico-kubeconfig
+        - /var/lib/calico
+      ignore_errors: yes
+      when: cni_plugin == "calico"
+
+    - name: Clean up Calico iptables rules
+      shell: |
+        iptables-save | grep -v CALICO | iptables-restore 2>/dev/null || true
+      ignore_errors: yes
+      when: cni_plugin == "calico"

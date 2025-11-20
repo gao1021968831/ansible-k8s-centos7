@@ -1,0 +1,24 @@
+---
+- name: Add Kubernetes repository
+  copy:
+    content: |
+      [kubernetes]
+      name=Kubernetes
+      baseurl=https://mirrors.aliyun.com/kubernetes/yum/repos/kubernetes-el7-x86_64/
+      enabled=1
+      gpgcheck=0
+    dest: /etc/yum.repos.d/kubernetes.repo
+
+- name: Install kubernetes packages
+  yum:
+    name:
+      - kubelet-{{ k8s_version }}
+      - kubeadm-{{ k8s_version }}
+      - kubectl-{{ k8s_version }}
+    state: present
+
+- name: Enable kubelet service
+  systemd:
+    name: kubelet
+    enabled: yes
+    daemon_reload: yes

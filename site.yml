@@ -1,0 +1,43 @@
+---
+- name: Initialize all nodes
+  hosts: all
+  tags:
+    - init
+    - system-init
+    - containerd
+    - kubernetes-install
+  roles:
+    - system-init
+    - containerd
+    - kubernetes-install
+
+- name: Initialize master nodes
+  hosts: masters
+  tags:
+    - init
+    - master-init
+  roles:
+    - master-init
+
+- name: Install CNI plugin
+  hosts: masters[0]
+  tags:
+    - cni
+    - cni-plugin
+  roles:
+    - cni-plugin
+
+- name: Join worker nodes
+  hosts: workers
+  tags:
+    - worker-join
+  roles:
+    - worker-join
+
+- name: Setup nginx proxy on worker nodes
+  hosts: workers
+  tags:
+    - nginx
+    - nginx-proxy
+  roles:
+    - nginx-proxy

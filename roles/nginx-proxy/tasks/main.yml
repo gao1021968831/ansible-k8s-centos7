@@ -1,0 +1,36 @@
+---
+- name: Create nginx config directory
+  file:
+    path: /etc/nginx
+    state: directory
+    mode: '0755'
+
+- name: Configure nginx
+  template:
+    src: nginx-proxy.conf.j2
+    dest: /etc/kubernetes/nginx.conf
+    mode: '0644'
+
+- name: Create static pod directory
+  file:
+    path: /etc/kubernetes/manifests
+    state: directory
+    mode: '0755'
+
+- name: Create nginx static pod manifest
+  template:
+    src: nginx-static-pod.yaml.j2
+    dest: /etc/kubernetes/manifests/nginx-proxy.yaml
+    mode: '0644'
+
+- name: Check if kubelet config needs update
+  shell: grep -q '127.0.0.1:6443' /etc/kubernetes/kubelet.conf && echo 'updated' || echo 'not_updated'
+  register: kubelet_config_check
+  changed_when: false
+  ignore_errors: yes
+
+- name: Update kubelet kubeconfig to use local nginx proxy
+  shell: |
+    sed -i 's|https://.*:6443|https://127.0.0.1:6443|g' /etc/kubernetes/kubelet.conf
+  notify: Restart kubelet
+  when: kubelet_config_check.stdout == 'not_updated'

@@ -1,0 +1,79 @@
+---
+- name: Create kubeadm config directory
+  file:
+    path: /etc/kubernetes/kubeadm
+    state: directory
+    mode: '0755'
+
+- name: Generate kubeadm config
+  template:
+    src: kubeadm-config.yaml.j2
+    dest: /etc/kubernetes/kubeadm/kubeadm-config.yaml
+    mode: '0644'
+
+- name: Check if cluster already initialized
+  stat:
+    path: /etc/kubernetes/admin.conf
+  register: admin_conf_stat
+  when: inventory_hostname == groups['masters'][0]
+
+- name: Initialize first master node
+  shell: |
+    kubeadm init --config=/etc/kubernetes/kubeadm/kubeadm-config.yaml
+  register: kubeadm_init_result
+  when: inventory_hostname == groups['masters'][0] and not admin_conf_stat.stat.exists
+
+- name: Create .kube directory
+  file:
+    path: /root/.kube
+    state: directory
+    mode: '0755'
+
+- name: Copy admin config
+  copy:
+    src: /etc/kubernetes/admin.conf
+    dest: /root/.kube/config
+    remote_src: yes
+    mode: '0600'
+  when: inventory_hostname == groups['masters'][0]
+
+- name: Upload certificates and get certificate key
+  shell: |
+    kubeadm init phase upload-certs --upload-certs 2>&1 | tail -1
+  register: cert_key_output
+  when: inventory_hostname == groups['masters'][0]
+
+- name: Get join token for masters
+  shell: |
+    kubeadm token create --print-join-command --certificate-key {{ cert_key_output.stdout }}
+  register: master_join_command
+  when: inventory_hostname == groups['masters'][0]
+
+- name: Set master join command fact
+  set_fact:
+    master_join_cmd: "{{ master_join_command.stdout }}"
+  when: inventory_hostname == groups['masters'][0]
+
+- name: Check if other master nodes already joined
+  stat:
+    path: /etc/kubernetes/admin.conf
+  register: other_master_admin_conf
+  when: inventory_hostname != groups['masters'][0] and inventory_hostname in groups['masters']
+
+- name: Join other master nodes
+  shell: "{{ hostvars[groups['masters'][0]]['master_join_cmd'] }}"
+  when: inventory_hostname != groups['masters'][0] and inventory_hostname in groups['masters'] and not other_master_admin_conf.stat.exists
+
+- name: Wait for admin config to be available
+  wait_for:
+    path: /etc/kubernetes/admin.conf
+    timeout: 300
+  when: inventory_hostname != groups['masters'][0] and inventory_hostname in groups['masters']
+
+- name: Copy admin config after joining
+  copy:
+    src: /etc/kubernetes/admin.conf
+    dest: /root/.kube/config
+    remote_src: yes
+    mode: '0600'
+  when: inventory_hostname != groups['masters'][0] and inventory_hostname in groups['masters']

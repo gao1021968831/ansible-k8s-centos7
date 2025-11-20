@@ -1,0 +1,27 @@
+---
+- name: Copy certificate renewal script to master nodes
+  copy:
+    src: update-kubeadm-cert.sh
+    dest: /root/update-kubeadm-cert.sh
+    mode: '0755'
+  when: inventory_hostname in groups['masters']
+
+- name: Run certificate renewal script
+  shell: |
+    cd /root
+    ./update-kubeadm-cert.sh all
+  environment:
+    KUBECONFIG: /root/.kube/config
+  register: cert_renewal_result
+  when: inventory_hostname in groups['masters']
+  ignore_errors: yes
+
+- name: Display certificate renewal result
+  debug:
+    msg: "{{ cert_renewal_result.stdout_lines }}"
+  when: inventory_hostname in groups['masters'] and cert_renewal_result.stdout_lines is defined
+
+- name: Display certificate renewal errors if any
+  debug:
+    msg: "{{ cert_renewal_result.stderr_lines }}"
+  when: inventory_hostname in groups['masters'] and cert_renewal_result.stderr_lines is defined and cert_renewal_result.rc != 0

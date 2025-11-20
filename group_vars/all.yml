@@ -1,0 +1,13 @@
+---
+k8s_version: "1.28.0"
+containerd_version: "1.6.33"
+
+cni_plugin: "calico"
+
+kubernetes_pod_subnet: "10.244.0.0/16"
+kubernetes_service_subnet: "10.96.0.0/12"
+
+kube_apiserver_port: 6443
+nginx_proxy_port: 6443
+
+system_timezone: "Asia/Shanghai"

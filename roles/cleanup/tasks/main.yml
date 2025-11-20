@@ -1,0 +1,40 @@
+---
+- name: Stop kubelet service
+  systemd:
+    name: kubelet
+    state: stopped
+    enabled: no
+  ignore_errors: yes
+
+- name: Remove Kubernetes directories
+  file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/kubernetes
+    - /var/lib/kubelet
+    - /var/lib/etcd
+    - /etc/cni/net.d
+    - /root/.kube
+  ignore_errors: yes
+
+- name: Clean up iptables rules
+  shell: |
+    iptables -F
+    iptables -X
+    iptables -t nat -F
+    iptables -t nat -X
+    iptables -t mangle -F
+    iptables -t mangle -X
+  ignore_errors: yes
+
+- name: Clean up network interfaces
+  shell: |
+    ip link delete flannel.1 2>/dev/null || true
+    ip link delete cni0 2>/dev/null || true
+  ignore_errors: yes
+
+- name: Reset kubeadm
+  shell: |
+    kubeadm reset -f
+  ignore_errors: yes

@@ -1,0 +1,130 @@
+---
+- name: Wait for control plane to be ready
+  shell: kubectl get nodes
+  environment:
+    KUBECONFIG: /root/.kube/config
+  register: nodes_check
+  until: nodes_check.rc == 0
+  retries: 30
+  delay: 10
+  when: inventory_hostname == groups['masters'][0]
+
+- name: Check if Flannel CNI already installed
+  shell: kubectl get namespace kube-flannel 2>/dev/null
+  environment:
+    KUBECONFIG: /root/.kube/config
+  register: flannel_ns_check
+  ignore_errors: yes
+  when: inventory_hostname == groups['masters'][0] and cni_plugin == "flannel"
+
+- name: Install Flannel CNI plugin
+  shell: |
+    kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml
+  environment:
+    KUBECONFIG: /root/.kube/config
+  when: inventory_hostname == groups['masters'][0] and cni_plugin == "flannel" and flannel_ns_check.rc != 0
+
+- name: Wait for Flannel pods to be created
+  shell: |
+    kubectl get pods -n kube-flannel -l app=flannel --no-headers 2>/dev/null | wc -l
+  environment:
+    KUBECONFIG: /root/.kube/config
+  register: flannel_pods_count
+  until: flannel_pods_count.stdout | int > 0
+  retries: 30
+  delay: 5
+  when: inventory_hostname == groups['masters'][0] and cni_plugin == "flannel"
+
+- name: Wait for Flannel to be ready
+  shell: |
+    kubectl wait --for=condition=ready pod -l app=flannel -n kube-flannel --timeout=300s
+  environment:
+    KUBECONFIG: /root/.kube/config
+  when: inventory_hostname == groups['masters'][0] and cni_plugin == "flannel"
+  retries: 3
+  delay: 10
+
+- name: Check if Calico CNI already installed
+  shell: kubectl get namespace tigera-operator 2>/dev/null
+  environment:
+    KUBECONFIG: /root/.kube/config
+  register: calico_ns_check
+  ignore_errors: yes
+  changed_when: false
+  when: inventory_hostname == groups['masters'][0] and cni_plugin == "calico"
+
+- name: Create temporary directory for Calico manifests
+  tempfile:
+    state: directory
+    suffix: calico
+  register: calico_temp_dir
+  when: inventory_hostname == groups['masters'][0] and cni_plugin == "calico" and calico_ns_check.rc != 0
+
+- name: Download Calico operator manifest
+  get_url:
+    url: https://raw.githubusercontent.com/projectcalico/calico/v3.26.1/manifests/tigera-operator.yaml
+    dest: "{{ calico_temp_dir.path }}/tigera-operator.yaml"
+    force: yes
+  when: inventory_hostname == groups['masters'][0] and cni_plugin == "calico" and calico_ns_check.rc != 0
+
+- name: Install Calico operator
+  command: kubectl create -f {{ calico_temp_dir.path }}/tigera-operator.yaml
+  environment:
+    KUBECONFIG: /root/.kube/config
+  register: calico_operator_apply
+  retries: 3
+  delay: 5
+  until: calico_operator_apply.rc == 0
+  when: inventory_hostname == groups['masters'][0] and cni_plugin == "calico" and calico_ns_check.rc != 0
+
+- name: Wait for Calico operator pods to be created
+  command: kubectl get pods -n tigera-operator -l k8s-app=tigera-operator --no-headers
+  environment:
+    KUBECONFIG: /root/.kube/config
+  register: calico_operator_pods
+  until: calico_operator_pods.rc == 0 and calico_operator_pods.stdout | length > 0
+  retries: 10
+  delay: 5
+  when: inventory_hostname == groups['masters'][0] and cni_plugin == "calico"
+
+- name: Wait for Calico operator to be ready
+  command: kubectl wait --for=condition=available deployment/tigera-operator -n tigera-operator --timeout=300s
+  environment:
+    KUBECONFIG: /root/.kube/config
+  register: calico_operator_wait
+  retries: 5
+  delay: 10
+  until: calico_operator_wait.rc == 0
+  when: inventory_hostname == groups['masters'][0] and cni_plugin == "calico"
+
+- name: Template Calico custom resources
+  template:
+    src: calico-custom-resources.yaml.j2
+    dest: "{{ calico_temp_dir.path }}/custom-resources.yaml"
+  when: inventory_hostname == groups['masters'][0] and cni_plugin == "calico" and calico_ns_check.rc != 0
+
+- name: Apply Calico custom resources
+  command: kubectl apply -f {{ calico_temp_dir.path }}/custom-resources.yaml
+  environment:
+    KUBECONFIG: /root/.kube/config
+  register: calico_cr_apply
+  retries: 3
+  delay: 10
+  until: calico_cr_apply.rc == 0
+  when: inventory_hostname == groups['masters'][0] and cni_plugin == "calico" and calico_ns_check.rc != 0
+
+- name: Wait for Calico pods to be ready
+  command: kubectl wait --for=condition=ready pod -l k8s-app=calico-node -n calico-system --timeout=300s
+  environment:
+    KUBECONFIG: /root/.kube/config
+  register: calico_pods_wait
+  retries: 5
+  delay: 10
+  until: calico_pods_wait.rc == 0
+  when: inventory_hostname == groups['masters'][0] and cni_plugin == "calico"
+
+- name: Clean up temporary files
+  file:
+    path: "{{ calico_temp_dir.path }}"
+    state: absent
+  when: calico_temp_dir.path is defined

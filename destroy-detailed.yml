@@ -1,0 +1,108 @@
+---
+- name: Drain and remove worker nodes
+  hosts: workers
+  tags:
+    - drain
+    - destroy-workers
+    - destroy
+  tasks:
+    - name: Drain worker node
+      shell: |
+        kubectl drain {{ inventory_hostname }} --ignore-daemonsets --delete-emptydir-data --force
+      environment:
+        KUBECONFIG: /root/.kube/config
+      ignore_errors: yes
+      delegate_to: "{{ groups['masters'][0] }}"
+
+    - name: Remove worker node from cluster
+      shell: |
+        kubectl delete node {{ inventory_hostname }}
+      environment:
+        KUBECONFIG: /root/.kube/config
+      ignore_errors: yes
+      delegate_to: "{{ groups['masters'][0] }}"
+
+- name: Cleanup worker nodes
+  hosts: workers
+  tags:
+    - cleanup-workers
+    - destroy-workers
+    - destroy
+  roles:
+    - cleanup
+
+- name: Cleanup master nodes
+  hosts: masters
+  tags:
+    - cleanup-masters
+    - destroy-masters
+    - destroy
+  roles:
+    - cleanup
+
+- name: Remove nginx proxy from worker nodes
+  hosts: workers
+  tags:
+    - cleanup-workers
+    - destroy-workers
+    - destroy
+  tasks:
+    - name: Remove nginx proxy manifest
+      file:
+        path: /etc/kubernetes/manifests/nginx-proxy.yaml
+        state: absent
+      ignore_errors: yes
+
+    - name: Remove nginx config
+      file:
+        path: /etc/kubernetes/nginx.conf
+        state: absent
+      ignore_errors: yes
+
+- name: Clean up Calico from all nodes
+  hosts: all
+  tags:
+    - cleanup-calico
+    - destroy
+  tasks:
+    - name: Clean up network interfaces (Calico)
+      shell: |
+        ip link delete tunl0 2>/dev/null || true
+      ignore_errors: yes
+      when: cni_plugin == "calico"
+
+    - name: Clean up Calico directories
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/cni/net.d/10-calico.conflist
+        - /etc/cni/net.d/calico-kubeconfig
+        - /var/lib/calico
+      ignore_errors: yes
+      when: cni_plugin == "calico"
+
+    - name: Clean up Calico iptables rules
+      shell: |
+        iptables-save | grep -v CALICO | iptables-restore 2>/dev/null || true
+      ignore_errors: yes
+      when: cni_plugin == "calico"
+
+- name: Final cleanup on all nodes
+  hosts: all
+  tags:
+    - final-cleanup
+    - destroy
+  tasks:
+    - name: Verify cleanup - check if kubernetes directories exist
+      stat:
+        path: "{{ item }}"
+      register: cleanup_check
+      loop:
+        - /etc/kubernetes
+        - /var/lib/kubelet
+      ignore_errors: yes
+
+    - name: Display cleanup status
+      debug:
+        msg: "Cleanup completed. Kubernetes directories removed."

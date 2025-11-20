@@ -1,0 +1,45 @@
+---
+- name: Add new worker nodes to Kubernetes cluster
+  hosts: new_workers
+  tags:
+    - add-worker
+  roles:
+    - system-init
+    - containerd
+    - kubernetes-install
+
+- name: Join new worker nodes to cluster
+  hosts: new_workers
+  tags:
+    - add-worker
+    - worker-join
+  roles:
+    - worker-join
+
+- name: Setup nginx proxy on new worker nodes
+  hosts: new_workers
+  tags:
+    - add-worker
+    - nginx-proxy
+  roles:
+    - nginx-proxy
+
+- name: Verify new worker nodes
+  hosts: masters[0]
+  tags:
+    - add-worker
+    - verify
+  tasks:
+    - name: Wait for nodes to be ready
+      shell: |
+        kubectl get nodes -o wide
+      environment:
+        KUBECONFIG: /root/.kube/config
+      register: nodes_status
+      until: "'Ready' in nodes_status.stdout"
+      retries: 30
+      delay: 10
+
+    - name: Display cluster nodes
+      debug:
+        msg: "{{ nodes_status.stdout }}"

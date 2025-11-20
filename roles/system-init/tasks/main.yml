@@ -1,0 +1,82 @@
+---
+- name: Set timezone
+  timezone:
+    name: "{{ system_timezone }}"
+
+- name: Disable SELinux
+  selinux:
+    state: disabled
+
+- name: Check if swap is enabled
+  shell: swapon --show | wc -l
+  register: swap_status
+  changed_when: false
+
+- name: Disable swap
+  shell: swapoff -a
+  when: swap_status.stdout | int > 0
+
+- name: Remove swap from fstab
+  lineinfile:
+    path: /etc/fstab
+    regexp: '^[^#].*swap'
+    state: absent
+
+- name: Load kernel modules
+  modprobe:
+    name: "{{ item }}"
+    state: present
+  loop:
+    - overlay
+    - br_netfilter
+
+- name: Configure kernel parameters
+  sysctl:
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
+    sysctl_set: yes
+    state: present
+    reload: yes
+  loop:
+    - { key: "net.bridge.bridge-nf-call-iptables", value: "1" }
+    - { key: "net.bridge.bridge-nf-call-ip6tables", value: "1" }
+    - { key: "net.ipv4.ip_forward", value: "1" }
+    - { key: "vm.overcommit_memory", value: "1" }
+    - { key: "kernel.panic", value: "10" }
+    - { key: "kernel.panic_on_oops", value: "1" }
+
+- name: Install required packages
+  yum:
+    name:
+      - wget
+      - curl
+      - git
+      - net-tools
+      - telnet
+      - chrony
+      - device-mapper-persistent-data
+      - lvm2
+    state: present
+
+- name: Configure hosts file
+  lineinfile:
+    path: /etc/hosts
+    line: "{{ hostvars[item]['ansible_host'] }} {{ item }}"
+    state: present
+  loop: "{{ groups['all'] }}"
+
+- name: Configure crictl for containerd
+  copy:
+    content: |
+      runtime-endpoint: unix:///run/containerd/containerd.sock
+      image-endpoint: unix:///run/containerd/containerd.sock
+      timeout: 10
+      debug: false
+    dest: /etc/crictl.yaml
+    mode: '0644'
+
+- name: Start and enable chrony
+  systemd:
+    name: chronyd
+    state: started
+    enabled: yes
