@@ -13,14 +13,8 @@
     state: directory
     mode: '0755'
 
-- name: Check if containerd config exists
-  stat:
-    path: /etc/containerd/config.toml
-  register: containerd_config_stat
-
 - name: Generate default containerd config
   shell: containerd config default > /etc/containerd/config.toml
-  when: not containerd_config_stat.stat.exists
 
 - name: Configure containerd for Kubernetes
   lineinfile:
