@@ -34,13 +34,6 @@
   roles:
     - nginx-proxy
 
-- name: Approve pending kubelet CSRs
-  hosts: masters[0]
-  tags:
-    - csr-approve
-  roles:
-    - csr-approve
-
 - name: Install CNI plugin
   hosts: masters[0]
   tags:

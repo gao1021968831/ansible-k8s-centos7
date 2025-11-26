@@ -1,7 +1,0 @@
----
-- name: Renew Kubernetes certificates
-  hosts: masters
-  tags:
-    - cert-renewal
-  roles:
-    - cert-renewal
